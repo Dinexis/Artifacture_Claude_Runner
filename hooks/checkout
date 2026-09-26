@@ -1,0 +1,70 @@
+#!/usr/bin/env bash
+# Runner-Lifecycle-Hook "checkout": läuft einmal pro Repo anstelle des eingebauten Clones.
+#
+# Ist das Repo der Session das Umbrella des Artifacture-Projekts (laut get_project_setup):
+#   1. Setup-Script über den Artifacture-MCP holen (get_setup_script)
+#   2. Persistenten Cache auf dem Volume provisionieren (clone-or-ff-pull, ADR-014)
+#   3. Arbeitsbaum (Umbrella + Sub-Repos laut Manifest) lokal aus dem Cache materialisieren
+#      -> kein Re-Clone pro Session, nur Deltas über das Netz
+# Alle anderen Repos werden normal geklont.
+set -euo pipefail
+
+: "${CLAUDE_RUNNER_REPO_URL:?}"
+: "${CLAUDE_RUNNER_CHECKOUT_PATH:?}"
+REPO_URL="$CLAUDE_RUNNER_REPO_URL"
+REF="${CLAUDE_RUNNER_REPO_REF:-}"
+DEST="$CLAUDE_RUNNER_CHECKOUT_PATH"
+CACHE="${ARTIFACTURE_CACHE_DIR:-/workspace/cache}"
+MCP=/usr/local/bin/artifacture-mcp
+
+log() { echo "[checkout-hook] $*" >&2; }
+norm() { printf '%s' "$1" | sed -E 's#^(https?://|ssh://)?(git@)?##; s#:#/#; s#/+$##; s#\.git$##' | tr '[:upper:]' '[:lower:]'; }
+
+checkout_ref() { # $1 = Repo-Verzeichnis; angeforderte Revision auschecken (detached ist ok)
+  if [ -n "$REF" ]; then
+    git -C "$1" fetch --quiet origin "$REF"
+    git -C "$1" checkout --quiet --detach FETCH_HEAD
+  fi
+}
+
+rm -rf "$DEST"
+mkdir -p "$(dirname "$DEST")"
+
+log "Hole Projekt-Manifest über MCP"
+manifest="$("$MCP" get_project_setup)"
+umbrella_url="$(printf '%s' "$manifest" | jq -r '.umbrella.gitUrl')"
+umbrella_target="$(printf '%s' "$manifest" | jq -r '.umbrella.targetPath')"
+
+# --- Kein Umbrella: normaler Clone -----------------------------------------
+if [ "$(norm "$REPO_URL")" != "$(norm "$umbrella_url")" ]; then
+  log "Nicht das Umbrella ($umbrella_url) – normaler Clone: $REPO_URL"
+  git clone --quiet "$REPO_URL" "$DEST"
+  checkout_ref "$DEST"
+  exit 0
+fi
+
+# --- Artifacture-Umbrella ---------------------------------------------------
+log "Umbrella erkannt, provisioniere Cache in $CACHE"
+script="$("$MCP" get_setup_script | jq -r '.script')"
+mkdir -p "$CACHE"
+ARTIFACTURE_WORKSPACE_PATH="$CACHE" bash -c "$script" >&2
+
+log "Materialisiere Arbeitsbaum nach $DEST"
+# Umbrella zuerst, dann Sub-Repos; Pfade relativ zum Umbrella-Zielpfad
+printf '%s' "$manifest" | jq -r --arg u "$umbrella_target" '
+  ([.umbrella.targetPath] + [.repos[].targetPath])[]
+  | ltrimstr($u) | ltrimstr("/")' |
+while IFS= read -r rel; do
+  src="$CACHE/$umbrella_target${rel:+/$rel}"
+  dst="$DEST${rel:+/$rel}"
+  [ -d "$src/.git" ] || { log "Fehlt im Cache: $src"; exit 1; }
+  mkdir -p "$(dirname "$dst")"
+  git clone --quiet --local "$src" "$dst"
+  # origin wieder auf GitHub zeigen lassen, damit Push/PR normal funktionieren
+  git -C "$dst" remote set-url origin "$(git -C "$src" remote get-url origin)"
+  git -C "$dst" fetch --quiet origin
+  log "  ${rel:-(Umbrella)}"
+done
+
+checkout_ref "$DEST"
+log "Checkout fertig"
