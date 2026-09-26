@@ -1,0 +1,16 @@
+#!/bin/sh
+# --exec-path-Wrapper: jede Runner-Session startet im Umbrella des Projekts.
+# Das Umbrella steht im Marker-File, das runner.sh beim Container-Start schreibt.
+# exec statt Kindprozess: stdin und fd 3 muessen beim Runner angeschlossen bleiben.
+set -eu
+
+ws="${ARTIFACTURE_WORKSPACE_PATH:-/workspace/project}"
+cwd="$(cat "$ws/.artifacture-cwd" 2>/dev/null || true)"
+
+if [ -z "$cwd" ] || [ ! -d "$cwd" ]; then
+  echo "[claude-session] Kein Umbrella unter $ws gefunden – ist das Runner-Setup gelaufen?" >&2
+  exit 1
+fi
+
+cd "$cwd"
+exec "$CLAUDE_RUNNER_CLAUDE_BIN" "$@"

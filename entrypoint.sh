@@ -7,8 +7,11 @@ set -euo pipefail
 : "${ARTIFACTURE_PROJECT_TOKEN:?ARTIFACTURE_PROJECT_TOKEN fehlt}"
 : "${ARTIFACTURE_GIT_TOKEN:?ARTIFACTURE_GIT_TOKEN fehlt}"
 
-export ARTIFACTURE_MCP_URL="${ARTIFACTURE_MCP_URL:-https://artifacture.ai/mcp}"
-export ARTIFACTURE_CACHE_DIR="${ARTIFACTURE_CACHE_DIR:-/workspace/cache}"
+export ARTIFACTURE_API_URL="${ARTIFACTURE_API_URL:-https://artifacture.ai}"
+ARTIFACTURE_API_URL="${ARTIFACTURE_API_URL%/}"
+export ARTIFACTURE_MCP_URL="${ARTIFACTURE_MCP_URL:-$ARTIFACTURE_API_URL/mcp}"
+# Fester Workspace auf dem Volume; der Session-Wrapper liest daraus das Umbrella (.artifacture-cwd).
+export ARTIFACTURE_WORKSPACE_PATH="${ARTIFACTURE_WORKSPACE_PATH:-/workspace/project}"
 BASE_DIR="${RUNNER_BASE_DIR:-/workspace/sessions}"
 
 # 1) Secret-Datei aus der Railway-Variable erzeugen und die Variable danach
@@ -18,25 +21,35 @@ mkdir -p /run/claude
 ( umask 077; printf '%s' "$CLAUDE_ENVIRONMENT_SECRET" > "$SECRET_FILE" )
 unset CLAUDE_ENVIRONMENT_SECRET
 
-# Cache und Session-Verzeichnisse liegen beide auf dem Volume (/workspace),
-# damit `git clone --local` Hardlinks nutzen kann.
-mkdir -p "$BASE_DIR" "$ARTIFACTURE_CACHE_DIR"
+mkdir -p "$BASE_DIR"
 
-# 2) Artifacture-MCP mit Bearer-Token für alle Sessions registrieren.
-#    Muss vor dem Runner-Start passieren: der Runner liest die Host-Config nur einmal.
-claude mcp remove --scope user artifacture >/dev/null 2>&1 || true
-claude mcp add-json --scope user artifacture "$(jq -nc \
-  --arg url "$ARTIFACTURE_MCP_URL" \
-  --arg auth "Bearer ${ARTIFACTURE_PROJECT_TOKEN}" \
-  '{type:"http", url:$url, headers:{Authorization:$auth}}')"
+# 2) Working Tree einrichten: Umbrella + Sub-Repos (clone-or-ff-pull), Skills/Settings ins Umbrella.
+#    Muss VOR dem Runner-Start fertig sein. Das Script traegt kein Secret, die Tokens kommen aus der Env.
+echo "[entrypoint] Hole Runner-Setup von $ARTIFACTURE_API_URL"
+setup="$(mktemp)"
+curl -fsSL -H "Authorization: Bearer ${ARTIFACTURE_PROJECT_TOKEN}" \
+  "$ARTIFACTURE_API_URL/api/bootstrap/runner.sh" -o "$setup"
+ARTIFACTURE_TOKEN="$ARTIFACTURE_PROJECT_TOKEN" bash "$setup" </dev/null
+rm -f "$setup"
 
-echo "[entrypoint] Starte Runner (base-dir: $BASE_DIR, cache: $ARTIFACTURE_CACHE_DIR)"
+# 3) Artifacture-MCP als einzige MCP-Verbindung festlegen. managed-mcp.json ist exklusiv:
+#    .mcp.json, User-Config und claude.ai-Connectoren werden damit ignoriert.
+#    ${ARTIFACTURE_PROJECT_TOKEN} steht bewusst unexpandiert in der Datei — Claude Code setzt es
+#    beim Verbinden aus der Session-Env ein, der Token landet also nicht auf der Platte.
+mkdir -p /etc/claude-code
+jq -n --arg url "$ARTIFACTURE_MCP_URL" \
+  '{mcpServers: {artifacture: {type: "http", url: $url,
+     headers: {Authorization: "Bearer ${ARTIFACTURE_PROJECT_TOKEN}"}}}}' \
+  > /etc/claude-code/managed-mcp.json
 
-# 3) Runner starten. Standard --drain-grace-sec 0: Runner beendet sich nach jeder
-#    Session, Railway startet ihn neu (Restart Policy "Always"), Volume bleibt erhalten.
+echo "[entrypoint] Starte Runner (workspace: $ARTIFACTURE_WORKSPACE_PATH, base-dir: $BASE_DIR)"
+
+# 4) Runner starten. Jede Session laeuft ueber den Wrapper, der ins Umbrella wechselt.
+#    Standard --drain-grace-sec 0: Runner beendet sich nach jeder Session, Railway startet ihn neu
+#    (Restart Policy "Always") — dabei laeuft Schritt 2 erneut und zieht den aktuellen Stand.
 exec claude self-hosted-runner \
   --environment-secret-file "$SECRET_FILE" \
   --base-dir "$BASE_DIR" \
   --capacity 1 \
-  --hooks-dir /etc/claude-runner/hooks \
+  --exec-path /usr/local/bin/claude-session \
   "$@"

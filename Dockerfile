@@ -9,8 +9,9 @@ ARG CLAUDE_CODE_VERSION=2.1.283
 ARG GIT_USER_NAME="Claude"
 ARG GIT_USER_EMAIL="noreply@anthropic.com"
 
+# unzip: Runner-Bundle entpacken; python3: Toolset-Hooks (welcome, directory_permissions)
 RUN apt-get update \
- && apt-get install -y --no-install-recommends git curl ca-certificates jq openssh-client \
+ && apt-get install -y --no-install-recommends git curl ca-certificates jq openssh-client unzip python3 \
  && rm -rf /var/lib/apt/lists/*
 
 RUN curl -fsSL "https://downloads.claude.ai/claude-code-releases/${CLAUDE_CODE_VERSION}/linux-x64/claude" \
@@ -18,14 +19,13 @@ RUN curl -fsSL "https://downloads.claude.ai/claude-code-releases/${CLAUDE_CODE_V
  && chmod 755 /usr/local/bin/claude \
  && claude --version
 
-# Helfer, Lifecycle-Hooks (im Image = für Sessions nicht dauerhaft änderbar) und Session-Baseline
-COPY bin/artifacture-mcp bin/git-credential-artifacture /usr/local/bin/
-COPY hooks/ /etc/claude-runner/hooks/
+# Helfer, Session-Wrapper (im Image = für Sessions nicht dauerhaft änderbar) und Session-Baseline
+COPY bin/claude-session bin/git-credential-artifacture /usr/local/bin/
 COPY claude/ /root/.claude/
 COPY entrypoint.sh /usr/local/bin/entrypoint.sh
 
-RUN chmod 755 /usr/local/bin/artifacture-mcp /usr/local/bin/git-credential-artifacture \
-              /usr/local/bin/entrypoint.sh /etc/claude-runner/hooks/* /root/.claude/hooks/* \
+RUN chmod 755 /usr/local/bin/claude-session /usr/local/bin/git-credential-artifacture \
+              /usr/local/bin/entrypoint.sh /root/.claude/hooks/* \
  && git config --system user.name "$GIT_USER_NAME" \
  && git config --system user.email "$GIT_USER_EMAIL" \
  && git config --system --add safe.directory '*' \

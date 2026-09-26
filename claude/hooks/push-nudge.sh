@@ -1,7 +1,7 @@
 #!/bin/sh
 # Claude-Code-Stop-Hook: erinnert Claude einmal pro Turn daran, Änderungen im
-# Umbrella UND in den Sub-Repos zu committen und zu pushen. Der Runner löscht den
-# Arbeitsbaum nach der Session – nicht gepushte Arbeit wäre sonst weg.
+# Umbrella UND in den Sub-Repos zu committen und zu pushen. Der Workspace liegt zwar auf
+# dem Volume, aber nur Gepushtes ist für Menschen und andere Runner sichtbar.
 in=$(cat)
 case "$in" in *'"stop_hook_active":true'*) exit 0 ;; esac
 
