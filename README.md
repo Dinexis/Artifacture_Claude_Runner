@@ -16,6 +16,13 @@ Git-Policy: ADR-014 Kontext C (Commit und Push per Shell erlaubt, autonom wie pe
 
 Ein Runner arbeitet damit für genau ein Artifacture-Projekt.
 
+Runner-Optionen liest `claude self-hosted-runner` direkt aus der Env (Werte in ms), z. B.:
+
+| Variable | Flag | Empfehlung |
+|---|---|---|
+| `SELF_HOSTED_RUNNER_SESSION_IDLE_MS` | `--release-idle-session-min` | `300000` (5 min) – gibt den Slot einer untätigen Session frei; sie wird geparkt und bei der nächsten Nachricht fortgesetzt |
+| `SELF_HOSTED_RUNNER_STARTUP_TIMEOUT_MS` | `--startup-timeout-min` | Default 15 min – gibt Sessions frei, die beim Start hängen |
+
 ## Railway-Einstellungen
 
 - Volume gemountet auf `/workspace`
