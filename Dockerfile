@@ -3,8 +3,9 @@
 ARG DOTNET_SDK_VERSION=10.0
 FROM mcr.microsoft.com/dotnet/sdk:${DOTNET_SDK_VERSION}
 
-# Claude Code fest pinnen (mind. 2.1.224). Beim Upgrade hier hochziehen und neu deployen.
-ARG CLAUDE_CODE_VERSION=2.1.236
+# Claude Code fest pinnen. Neuere Modelle brauchen ggf. neuere Versionen (aktuell mind. 2.1.280).
+# Überschreibbar per Railway-Variable CLAUDE_CODE_VERSION (wird als Build-Arg übergeben).
+ARG CLAUDE_CODE_VERSION=2.1.283
 ARG GIT_USER_NAME="Claude"
 ARG GIT_USER_EMAIL="noreply@anthropic.com"
 
