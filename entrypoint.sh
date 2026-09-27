@@ -13,6 +13,9 @@ export ARTIFACTURE_MCP_URL="${ARTIFACTURE_MCP_URL:-$ARTIFACTURE_API_URL/mcp}"
 # Fester Workspace auf dem Volume; der Session-Wrapper liest daraus das Umbrella (.artifacture-cwd).
 export ARTIFACTURE_WORKSPACE_PATH="${ARTIFACTURE_WORKSPACE_PATH:-/workspace/project}"
 BASE_DIR="${RUNNER_BASE_DIR:-/workspace/sessions}"
+# Untaetige Sessions nach 5 min parken statt den Slot endlos zu halten; sie laufen bei der
+# naechsten Nachricht auf einem freien Runner weiter. Ueberschreibbar per Railway-Variable (ms).
+export SELF_HOSTED_RUNNER_SESSION_IDLE_MS="${SELF_HOSTED_RUNNER_SESSION_IDLE_MS:-300000}"
 
 # 1) Secret-Datei aus der Railway-Variable erzeugen und die Variable danach
 #    aus der Umgebung entfernen, damit Sessions sie nicht erben.

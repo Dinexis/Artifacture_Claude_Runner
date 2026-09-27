@@ -12,5 +12,18 @@ if [ -z "$cwd" ] || [ ! -d "$cwd" ]; then
   exit 1
 fi
 
+# Umbrella als vertrauenswuerdig markieren. Ohne das ignoriert Claude Code permissions.allow aus
+# <umbrella>/.claude/settings.json ("this workspace has not been trusted") — die Session haengt
+# dann am ersten Permission-Prompt und haelt den Slot. Der Trust-Status liegt pro Session in
+# $CLAUDE_CONFIG_DIR/.claude.json, deshalb hier und nicht im Image.
+if [ -n "${CLAUDE_CONFIG_DIR:-}" ]; then
+  cfg="$CLAUDE_CONFIG_DIR/.claude.json"
+  [ -s "$cfg" ] || echo '{}' > "$cfg"
+  tmp="$cfg.tmp.$$"
+  # Scheitert jq (kaputte Datei), startet die Session trotzdem — nur eben mit Prompts.
+  jq --arg p "$cwd" '.projects[$p].hasTrustDialogAccepted = true' "$cfg" > "$tmp" && mv "$tmp" "$cfg" \
+    || { rm -f "$tmp"; echo "[claude-session] Trust fuer $cwd nicht gesetzt" >&2; }
+fi
+
 cd "$cwd"
 exec "$CLAUDE_RUNNER_CLAUDE_BIN" "$@"
