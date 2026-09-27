@@ -25,8 +25,10 @@ Runner-Optionen liest `claude self-hosted-runner` direkt aus der Env (Werte in m
 
 ## Railway-Einstellungen
 
-- `railway.json` setzt Dockerfile-Build und Restart Policy **Always**. Pflicht: der Runner beendet
-  sich nach jeder Session mit Exit 0, mit dem Railway-Default (On Failure) bliebe er danach aus.
+- Restart Policy **Always** (Service → Settings → Deploy), von Hand setzen. Pflicht: der Runner
+  beendet sich nach jeder Session mit Exit 0, mit dem Railway-Default (On Failure) bliebe er danach
+  aus. Eine `railway.json` hilft nicht — neue Services lesen Config as Code nicht mehr.
+  „Always“ gibt es nur auf bezahlten Plänen.
 - **Kein Volume.** Jede Replica hat ihren eigenen Workspace; das Setup klont beim Deploy neu und
   zieht bei jedem Neustart per ff-pull nach.
 - Skalieren über **Replicas**, nicht über `--capacity`: alle Sessions eines Containers arbeiten im
@@ -50,6 +52,5 @@ Runner-Optionen liest `claude self-hosted-runner` direkt aus der Env (Werte in m
 
 - `entrypoint.sh` – Secret-Datei, Runner-Setup, managed-mcp.json, Runner-Start
 - `bin/claude-session` – `--exec-path`-Wrapper: Trust setzen, `cd` ins Umbrella, `exec` Claude Code
-- `railway.json` – Build und Restart Policy
 - `bin/git-credential-artifacture` – Git-Auth über `ARTIFACTURE_GIT_TOKEN`
 - `claude/` – Session-Baseline in `~/.claude` (Stop-Hook, der ans Pushen erinnert)
