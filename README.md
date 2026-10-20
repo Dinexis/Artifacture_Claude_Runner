@@ -1,7 +1,19 @@
 # claude-runner
 
-Claude Code Self-hosted Runner für Dinexis / Artifacture, deployed auf Railway.
+Claude Code Self-hosted Runner für Artifacture, deployed auf Railway.
 Git-Policy: ADR-014 Kontext C (Commit und Push per Shell erlaubt, autonom wie per Desktop).
+
+> **Dieses Repo ist öffentlich und enthält nie ein Secret** (ADR-044). Alles Projekt- und
+> Personenspezifische kommt zur Laufzeit über die Railway-Variablen unten.
+
+## Bereitstellung über Artifacture
+
+Im Normalfall legt **Artifacture** den Service an (ADR-044): Ein AI-Teammate bekommt beim Anlegen
+seinen eigenen Container im Railway-Projekt, das der Arbeitsbereich unter *Runner-Hosting*
+hinterlegt hat. Der Worker baut den Service aus diesem Repo (`ARTIFACTURE_RUNNER_REPO`, Branch
+`ARTIFACTURE_RUNNER_BRANCH`, Default `prod`), setzt die Variablen und die Restart Policy und wartet
+den Deploy ab. Entfernen des Teammates löscht den Service wieder. Die Abschnitte unten beschreiben,
+was dieser Job setzt — und gelten genauso, falls ein Service doch einmal von Hand angelegt wird.
 
 ## Railway-Variablen
 
@@ -28,7 +40,8 @@ Runner-Optionen liest `claude self-hosted-runner` direkt aus der Env (Werte in m
 
 ## Railway-Einstellungen
 
-- Restart Policy **Always** (Service → Settings → Deploy), von Hand setzen. Pflicht: der Runner
+- Restart Policy **Always** — setzt der Bereitstellungs-Job; bei einem Service von Hand unter
+  Service → Settings → Deploy. Pflicht: der Runner
   beendet sich nach jeder Session mit Exit 0, mit dem Railway-Default (On Failure) bliebe er danach
   aus. Eine `railway.json` hilft nicht — neue Services lesen Config as Code nicht mehr.
   „Always“ gibt es nur auf bezahlten Plänen.
