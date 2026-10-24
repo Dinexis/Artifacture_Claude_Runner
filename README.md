@@ -1,7 +1,19 @@
 # claude-runner
 
-Claude Code Self-hosted Runner für Dinexis / Artifacture, deployed auf Railway.
+Claude Code Self-hosted Runner für Artifacture, deployed auf Railway.
 Git-Policy: ADR-014 Kontext C (Commit und Push per Shell erlaubt, autonom wie per Desktop).
+
+> **Dieses Repo ist öffentlich und enthält nie ein Secret** (ADR-044). Alles Projekt- und
+> Personenspezifische kommt zur Laufzeit über die Railway-Variablen unten.
+
+## Bereitstellung über Artifacture
+
+Im Normalfall legt **Artifacture** den Service an (ADR-044): Ein AI-Teammate bekommt beim Anlegen
+seinen eigenen Container im Railway-Projekt, das der Arbeitsbereich unter *Runner-Hosting*
+hinterlegt hat. Der Worker baut den Service aus diesem Repo (`ARTIFACTURE_RUNNER_REPO`, Branch
+`ARTIFACTURE_RUNNER_BRANCH`, Default `prod`), setzt die Variablen und die Restart Policy und wartet
+den Deploy ab. Entfernen des Teammates löscht den Service wieder. Die Abschnitte unten beschreiben,
+was dieser Job setzt — und gelten genauso, falls ein Service doch einmal von Hand angelegt wird.
 
 ## Railway-Variablen
 
@@ -9,12 +21,15 @@ Git-Policy: ADR-014 Kontext C (Commit und Push per Shell erlaubt, autonom wie pe
 |---|---|---|
 | `CLAUDE_ENVIRONMENT_SECRET` | ja | Environment-Key aus claude.ai → Cloud environments |
 | `ARTIFACTURE_PROJECT_TOKEN` | ja | Projekt-Token (`art_…`) des virtuellen Members; legt das Projekt fest und autorisiert. Der Member braucht einen Sitz. |
-| `ARTIFACTURE_GIT_TOKEN` | ja | GitHub Fine-grained PAT des Agent-Users (Contents: read/write) für die Projekt-Repos |
 | `ARTIFACTURE_API_URL` | nein | Default `https://artifacture.ai` |
 | `ARTIFACTURE_MCP_URL` | nein | Default `$ARTIFACTURE_API_URL/mcp` |
 | `ARTIFACTURE_WORKSPACE_PATH` | nein | Default `/workspace/project` |
 
-Ein Runner arbeitet damit für genau ein Artifacture-Projekt.
+Ein Runner arbeitet damit für genau ein Artifacture-Projekt. Einen GitHub-Account oder -Token braucht er nicht:
+den Git-Zugang holt der Credential-Helper bei jeder Git-Operation frisch bei Artifacture
+(`GET /api/runner/git-credential`) — ein Installation-Token der GitHub App, begrenzt auf die Repos des
+Projekts, eine Stunde gültig, nirgends abgelegt (ADR-039 §12). Voraussetzung: die Repos sind in der
+Installation der App freigegeben, und für Pushes auf geschützte Branches steht die App in der Bypass-Liste.
 
 Runner-Optionen liest `claude self-hosted-runner` direkt aus der Env (Werte in ms), z. B.:
 
@@ -25,7 +40,8 @@ Runner-Optionen liest `claude self-hosted-runner` direkt aus der Env (Werte in m
 
 ## Railway-Einstellungen
 
-- Restart Policy **Always** (Service → Settings → Deploy), von Hand setzen. Pflicht: der Runner
+- Restart Policy **Always** — setzt der Bereitstellungs-Job; bei einem Service von Hand unter
+  Service → Settings → Deploy. Pflicht: der Runner
   beendet sich nach jeder Session mit Exit 0, mit dem Railway-Default (On Failure) bliebe er danach
   aus. Eine `railway.json` hilft nicht — neue Services lesen Config as Code nicht mehr.
   „Always“ gibt es nur auf bezahlten Plänen.
@@ -39,6 +55,7 @@ Runner-Optionen liest `claude self-hosted-runner` direkt aus der Env (Werte in m
 ## Ablauf
 
 1. `entrypoint.sh` holt `GET /api/bootstrap/runner.sh` mit dem Projekt-Token und führt es aus:
+   Commit-Identität (Name des AI-Teammates, Noreply-Adresse des App-Bots),
    Umbrella + Sub-Repos nach `$ARTIFACTURE_WORKSPACE_PATH` (clone-or-ff-pull),
    Runner-Toolset (Skills, Hooks, settings.json mit freiem Bash/git) nach `<umbrella>/.claude/`,
    Marker `.artifacture-cwd`.
@@ -52,5 +69,5 @@ Runner-Optionen liest `claude self-hosted-runner` direkt aus der Env (Werte in m
 
 - `entrypoint.sh` – Secret-Datei, Runner-Setup, managed-mcp.json, Runner-Start
 - `bin/claude-session` – `--exec-path`-Wrapper: Trust setzen, `cd` ins Umbrella, `exec` Claude Code
-- `bin/git-credential-artifacture` – Git-Auth über `ARTIFACTURE_GIT_TOKEN`
+- `bin/git-credential-artifacture` – Git-Auth: holt pro Git-Operation ein kurzlebiges Token beim Backend
 - `claude/` – Session-Baseline in `~/.claude` (Stop-Hook, der ans Pushen erinnert)

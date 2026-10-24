@@ -5,7 +5,6 @@ set -euo pipefail
 
 : "${CLAUDE_ENVIRONMENT_SECRET:?CLAUDE_ENVIRONMENT_SECRET (Environment-Key) fehlt}"
 : "${ARTIFACTURE_PROJECT_TOKEN:?ARTIFACTURE_PROJECT_TOKEN fehlt}"
-: "${ARTIFACTURE_GIT_TOKEN:?ARTIFACTURE_GIT_TOKEN fehlt}"
 
 export ARTIFACTURE_API_URL="${ARTIFACTURE_API_URL:-https://artifacture.ai}"
 ARTIFACTURE_API_URL="${ARTIFACTURE_API_URL%/}"
@@ -27,7 +26,8 @@ unset CLAUDE_ENVIRONMENT_SECRET
 mkdir -p "$BASE_DIR"
 
 # 2) Working Tree einrichten: Umbrella + Sub-Repos (clone-or-ff-pull), Skills/Settings ins Umbrella.
-#    Muss VOR dem Runner-Start fertig sein. Das Script traegt kein Secret, die Tokens kommen aus der Env.
+#    Muss VOR dem Runner-Start fertig sein. Das Script traegt kein Secret: das Projekt-Token kommt aus der
+#    Env, den Git-Zugang holt der Credential-Helper pro Git-Operation beim Backend (ADR-039 §12).
 echo "[entrypoint] Hole Runner-Setup von $ARTIFACTURE_API_URL"
 setup="$(mktemp)"
 curl -fsSL -H "Authorization: Bearer ${ARTIFACTURE_PROJECT_TOKEN}" \
