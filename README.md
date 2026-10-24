@@ -21,9 +21,10 @@ was dieser Job setzt — und gelten genauso, falls ein Service doch einmal von H
 |---|---|---|
 | `CLAUDE_ENVIRONMENT_SECRET` | ja | Environment-Key aus claude.ai → Cloud environments |
 | `ARTIFACTURE_PROJECT_TOKEN` | ja | Projekt-Token (`art_…`) des virtuellen Members; legt das Projekt fest und autorisiert. Der Member braucht einen Sitz. |
-| `ARTIFACTURE_API_URL` | nein | Default `https://artifacture.ai` |
+| `ARTIFACTURE_API_URL` | nein | Setzt der Bereitstellungs-Job (aus `ARTIFACTURE_RUNNER_API_URL` der Plattform); Default `https://artifacture.ai` |
 | `ARTIFACTURE_MCP_URL` | nein | Default `$ARTIFACTURE_API_URL/mcp` |
 | `ARTIFACTURE_WORKSPACE_PATH` | nein | Default `/workspace/project` |
+| `RUNNER_BASE_DIR` | nein | Arbeitsverzeichnis des Runners für Sessions, Default `/workspace/sessions` |
 
 Ein Runner arbeitet damit für genau ein Artifacture-Projekt. Einen GitHub-Account oder -Token braucht er nicht:
 den Git-Zugang holt der Credential-Helper bei jeder Git-Operation frisch bei Artifacture
@@ -31,6 +32,8 @@ den Git-Zugang holt der Credential-Helper bei jeder Git-Operation frisch bei Art
 hinterlegt hat (Einstellungen → Git-Zugang), begrenzt auf die Repos des
 Projekts, eine Stunde gültig, nirgends abgelegt (ADR-039 §12). Voraussetzung: die Repos sind in der
 Installation der App freigegeben, und für Pushes auf geschützte Branches steht die App in der Bypass-Liste.
+Fehlerbilder: keine App hinterlegt → 403 `git_access_not_configured`; Repo außerhalb des Kontos der
+Installation → 422 `repo_outside_organization`; keine GitHub-Repos im Projekt → 422 `no_repositories`.
 
 Runner-Optionen liest `claude self-hosted-runner` direkt aus der Env (Werte in ms), z. B.:
 
@@ -46,10 +49,10 @@ Runner-Optionen liest `claude self-hosted-runner` direkt aus der Env (Werte in m
   beendet sich nach jeder Session mit Exit 0, mit dem Railway-Default (On Failure) bliebe er danach
   aus. Eine `railway.json` hilft nicht — neue Services lesen Config as Code nicht mehr.
   „Always“ gibt es nur auf bezahlten Plänen.
-- **Kein Volume.** Jede Replica hat ihren eigenen Workspace; das Setup klont beim Deploy neu und
-  zieht bei jedem Neustart per ff-pull nach.
-- Skalieren über **Replicas**, nicht über `--capacity`: alle Sessions eines Containers arbeiten im
-  selben Umbrella und kämen sich im Git-Stand in die Quere. Eine Replica = ein Slot.
+- **Kein Volume.** Das Setup klont beim Deploy neu und zieht bei jedem Neustart per ff-pull nach.
+- **Nicht skalieren:** genau ein Container pro AI-Teammate (ADR-044), eine Replica, `--capacity 1`.
+  Alle Sessions eines Containers arbeiten im selben Umbrella und kämen sich im Git-Stand in die
+  Quere. Mehr Durchsatz heißt ein weiteres AI-Teammate.
 - **Kein Cron Schedule.** Railway-Cron ist für Jobs, die sich beenden; der Runner soll dauerhaft pollen.
 - Kein Public Networking, Serverless aus
 

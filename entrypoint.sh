@@ -9,7 +9,7 @@ set -euo pipefail
 export ARTIFACTURE_API_URL="${ARTIFACTURE_API_URL:-https://artifacture.ai}"
 ARTIFACTURE_API_URL="${ARTIFACTURE_API_URL%/}"
 export ARTIFACTURE_MCP_URL="${ARTIFACTURE_MCP_URL:-$ARTIFACTURE_API_URL/mcp}"
-# Fester Workspace auf dem Volume; der Session-Wrapper liest daraus das Umbrella (.artifacture-cwd).
+# Fester Workspace im Container (kein Volume, beim Deploy neu geklont); der Session-Wrapper liest daraus das Umbrella (.artifacture-cwd).
 export ARTIFACTURE_WORKSPACE_PATH="${ARTIFACTURE_WORKSPACE_PATH:-/workspace/project}"
 BASE_DIR="${RUNNER_BASE_DIR:-/workspace/sessions}"
 # Untaetige Sessions nach 5 min parken statt den Slot endlos zu halten; sie laufen bei der
