@@ -27,7 +27,8 @@ was dieser Job setzt — und gelten genauso, falls ein Service doch einmal von H
 
 Ein Runner arbeitet damit für genau ein Artifacture-Projekt. Einen GitHub-Account oder -Token braucht er nicht:
 den Git-Zugang holt der Credential-Helper bei jeder Git-Operation frisch bei Artifacture
-(`GET /api/runner/git-credential`) — ein Installation-Token der GitHub App, begrenzt auf die Repos des
+(`GET /api/runner/git-credential`) — ein Installation-Token der GitHub App, die der Tenant in Artifacture
+hinterlegt hat (Einstellungen → Git-Zugang), begrenzt auf die Repos des
 Projekts, eine Stunde gültig, nirgends abgelegt (ADR-039 §12). Voraussetzung: die Repos sind in der
 Installation der App freigegeben, und für Pushes auf geschützte Branches steht die App in der Bypass-Liste.
 
