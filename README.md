@@ -1,7 +1,17 @@
 # claude-runner
 
 Claude Code Self-hosted Runner für Artifacture, deployed auf Railway.
-Git-Policy: ADR-014 Kontext C (Commit und Push per Shell erlaubt, autonom wie per Desktop).
+Ausführungsumgebung für autonomes Arbeiten eines AI-Teammates (ADR-017, ADR-044).
+Git-Policy: ADR-014 — Commit und Push auf `main`, wenn nötig auf einen Feature-Branch.
+
+## Wie Sessions starten
+
+Der Runner wartet auf Sessions aus dem Claude Environment des Teammates. Eine Session beginnt,
+wenn jemand sie startet: **von Hand** in claude.ai (Web, Desktop, App) mit diesem Environment,
+oder über einen **Scheduled Task** in claude.ai, der auf dieses Environment zeigt (Zeitplan oder
+API-Auslöser). Das Board wird nicht gepollt. In der Session holt Claude die dem Teammate
+zugewiesenen Items über MCP (`list_actionable_items` → `get_current_task`); was zu tun ist,
+steht im SystemPrompt des Workflow-Status.
 
 > **Dieses Repo ist öffentlich und enthält nie ein Secret** (ADR-044). Alles Projekt- und
 > Personenspezifische kommt zur Laufzeit über die Railway-Variablen unten.
@@ -53,7 +63,7 @@ Runner-Optionen liest `claude self-hosted-runner` direkt aus der Env (Werte in m
 - **Nicht skalieren:** genau ein Container pro AI-Teammate (ADR-044), eine Replica, `--capacity 1`.
   Alle Sessions eines Containers arbeiten im selben Umbrella und kämen sich im Git-Stand in die
   Quere. Mehr Durchsatz heißt ein weiteres AI-Teammate.
-- **Kein Cron Schedule.** Railway-Cron ist für Jobs, die sich beenden; der Runner soll dauerhaft pollen.
+- **Kein Cron Schedule.** Railway-Cron ist für Jobs, die sich beenden; der Runner läuft dauerhaft und wartet bei claude.ai auf Sessions. Zeitgesteuerte Arbeit gehört in einen Scheduled Task in claude.ai.
 - Kein Public Networking, Serverless aus
 
 ## Ablauf
