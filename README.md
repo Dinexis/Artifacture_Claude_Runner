@@ -2,7 +2,7 @@
 
 Claude Code Self-hosted Runner für Artifacture, deployed auf Railway.
 Ausführungsumgebung für autonomes Arbeiten eines AI-Teammates (ADR-017, ADR-044).
-Git-Policy: ADR-014 — Commit und Push auf `main`, wenn nötig auf einen Feature-Branch.
+Git-Policy: zuerst die Anweisung des Workflow-Status; wo sie nichts vorgibt, ADR-014 — Commit und Push auf `main`, wenn nötig auf einen Feature-Branch.
 
 ## Wie Sessions starten
 
