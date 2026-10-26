@@ -1,6 +1,6 @@
 # claude-runner
 
-Claude Code Self-hosted Runner für Artifacture, deployed auf Railway.
+Claude Code Self-hosted Runner für Artifacture — deployed auf Railway von Artifacture oder selbst betrieben (Self Managed).
 Ausführungsumgebung für autonomes Arbeiten eines AI-Teammates (ADR-017, ADR-044).
 Git-Policy: zuerst die Anweisung des Workflow-Status; wo sie nichts vorgibt, ADR-014 — Commit und Push auf `main`, wenn nötig auf einen Feature-Branch.
 
@@ -25,6 +25,42 @@ hinterlegt hat. Der Worker baut den Service aus diesem Repo (`ARTIFACTURE_RUNNER
 den Deploy ab. Entfernen des Teammates löscht den Service wieder. Die Abschnitte unten beschreiben,
 was dieser Job setzt — und gelten genauso, falls ein Service doch einmal von Hand angelegt wird.
 
+## Selbst betreiben (Self Managed)
+
+Ein AI-Teammate mit der Betriebsart **„Selbst betrieben: eigener Runner“** (Hosting Self Managed,
+Environment Claude Self-hosted, ADR-044) bekommt bei Artifacture keinen Container. Beim Anlegen
+zeigt Artifacture den projektgebundenen `art_`-Token des Teammates **einmal** an, dazu diesen
+Startbefehl (Repo und Branch aus der Plattform-Umgebung, URL der Artifacture-Instanz):
+
+```bash
+git clone --branch 'prod' 'https://github.com/Dinexis/Artifacture_Claude_Runner.git' artifacture-runner
+docker build -t artifacture-runner ./artifacture-runner
+docker run -d --name artifacture-runner-<teammate> --restart always \
+  -e CLAUDE_ENVIRONMENT_SECRET='<Environment-Key aus claude.ai>' \
+  -e ARTIFACTURE_PROJECT_TOKEN='art_…' \
+  -e ARTIFACTURE_API_URL='https://artifacture.ai' \
+  artifacture-runner
+```
+
+- **Pflicht:** `CLAUDE_ENVIRONMENT_SECRET` (eigenes Self-hosted Environment pro Teammate — Artifacture
+  sieht den Key nie) und `ARTIFACTURE_PROJECT_TOKEN` (der angezeigte Token). Verloren? In Artifacture
+  unter *Nutzer* „Token neu erzeugen“ — der alte wird sofort ungültig.
+- **Optional:** alle übrigen Variablen aus der Tabelle unten, `CLAUDE_CODE_VERSION` als `--build-arg`.
+- `--restart always` ist Pflicht (der Runner beendet sich nach jeder Session mit Exit 0), eine Replica,
+  kein Volume — wie unter *Railway-Einstellungen*.
+- **Git regelt ihr selbst.** Artifacture stellt selbst betriebenen Teammates keinen Git-Zugang aus und
+  setzt keine Commit-Identität des App-Bots. Der eingebaute Helper `git-credential-artifacture` bekommt
+  `403 git_access_self_managed`, endet ohne Zugangsdaten mit Exit ≠ 0, und Git fragt den nächsten
+  konfigurierten Helper (geprüft mit Git 2.43). Einen eigenen Helper oder eigene Zugangsdaten im
+  Container hinterlegen, z. B. `git config --global --add credential.helper …` (der des Images steht in
+  der System-Config und kommt zuerst). Ohne eigenen Git-Zugang scheitert schon das Klonen des Umbrellas
+  in `runner.sh`. Die Commit-Identität setzt ihr ebenfalls selbst (`user.name`/`user.email`).
+- **Abschalten:** Entfernt ihr das Teammate in Artifacture, wird der Token sofort ungültig (`401`). Den
+  Container stoppt ihr selbst (`docker rm -f artifacture-runner-<teammate>`).
+
+Die Betriebsart **„Selbst betrieben: nur Token“** braucht diesen Runner nicht: Artifacture zeigt den
+Token mit einer `.mcp.json`-Vorlage, eingesetzt wird er, wo der Nutzer will.
+
 ## Railway-Variablen
 
 | Variable | Pflicht | Inhalt |
@@ -43,7 +79,8 @@ hinterlegt hat (Einstellungen → Git-Zugang), begrenzt auf die Repos des
 Projekts, eine Stunde gültig, nirgends abgelegt (ADR-039 §12). Voraussetzung: die Repos sind in der
 Installation der App freigegeben, und für Pushes auf geschützte Branches steht die App in der Bypass-Liste.
 Fehlerbilder: keine App hinterlegt → 403 `git_access_not_configured`; Repo außerhalb des Kontos der
-Installation → 422 `repo_outside_organization`; keine GitHub-Repos im Projekt → 422 `no_repositories`.
+Installation → 422 `repo_outside_organization`; keine GitHub-Repos im Projekt → 422 `no_repositories`;
+selbst betriebenes Teammate → 403 `git_access_self_managed` (gewollt, Git regelt der Betreiber, siehe oben).
 
 Runner-Optionen liest `claude self-hosted-runner` direkt aus der Env (Werte in ms), z. B.:
 
