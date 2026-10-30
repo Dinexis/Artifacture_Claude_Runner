@@ -10,7 +10,7 @@ Der Runner wartet auf Sessions aus dem Claude Environment des Teammates. Eine Se
 wenn jemand sie startet: **von Hand** in claude.ai (Web, Desktop, App) mit diesem Environment,
 oder über einen **Scheduled Task** in claude.ai, der auf dieses Environment zeigt (Zeitplan oder
 API-Auslöser). Das Board wird nicht gepollt. In der Session holt Claude die dem Teammate
-zugewiesenen Items über MCP (`list_actionable_items` → `get_current_task`); was zu tun ist,
+zugewiesenen Items über MCP (`list_actionable_items` → `claim_task` → `get_current_task`); was zu tun ist,
 steht im SystemPrompt des Workflow-Status.
 
 > **Dieses Repo ist öffentlich und enthält nie ein Secret** (ADR-044). Alles Projekt- und
@@ -22,7 +22,9 @@ Im Normalfall legt **Artifacture** den Service an (ADR-044): Ein AI-Teammate bek
 seinen eigenen Container im Railway-Projekt, das der Arbeitsbereich unter *Runner-Hosting*
 hinterlegt hat. Der Worker baut den Service aus diesem Repo (`ARTIFACTURE_RUNNER_REPO`, Branch
 `ARTIFACTURE_RUNNER_BRANCH`, Default `prod`), setzt die Variablen und die Restart Policy und wartet
-den Deploy ab. Entfernen des Teammates löscht den Service wieder. Die Abschnitte unten beschreiben,
+den Deploy ab. Entfernen des Teammates löscht den Service wieder. Pausieren löscht den Service;
+Fortsetzen legt ihn neu an (der Claude-Environment-Key bleibt dabei hinterlegt, Token und
+`RailwayServiceId` sind danach neu, von Hand gesetzte Service-Einstellungen weg). Die Abschnitte unten beschreiben,
 was dieser Job setzt — und gelten genauso, falls ein Service doch einmal von Hand angelegt wird.
 
 ## Selbst betreiben (Self Managed)
