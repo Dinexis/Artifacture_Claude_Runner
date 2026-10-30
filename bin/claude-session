@@ -1,29 +1,124 @@
 #!/bin/sh
-# --exec-path-Wrapper: jede Runner-Session startet im Umbrella des Projekts.
-# Das Umbrella steht im Marker-File, das runner.sh beim Container-Start schreibt.
-# exec statt Kindprozess: stdin und fd 3 muessen beim Runner angeschlossen bleiben.
+# --exec-path-Wrapper: jede Runner-Session startet in einer EIGENEN Worktree des Umbrellas samt
+# Sub-Repos (ADR-049) — mehrere Sessions im selben Container (RUNNER_CAPACITY > 1) kommen sich so im
+# Git-Stand nicht in die Quere, und jede holt sich beim Start den aktuellen Stand.
+# Das Umbrella steht im Marker-File .artifacture-cwd, die Repo-Liste in .artifacture-repos (eine Zeile
+# pro Repo, relativ zum Workspace, Umbrella zuerst) — beides schreibt runner.sh beim Container-Start.
+# exec statt Kindprozess: stdin und fd 3 muessen beim Runner angeschlossen bleiben. Deshalb geht vor dem
+# exec jede Ausgabe nach stderr, nie nach stdout.
 set -eu
+
+log() { echo "[claude-session] $*" >&2; }
 
 ws="${ARTIFACTURE_WORKSPACE_PATH:-/workspace/project}"
 cwd="$(cat "$ws/.artifacture-cwd" 2>/dev/null || true)"
 
 if [ -z "$cwd" ] || [ ! -d "$cwd" ]; then
-  echo "[claude-session] Kein Umbrella unter $ws gefunden – ist das Runner-Setup gelaufen?" >&2
+  log "Kein Umbrella unter $ws gefunden – ist das Runner-Setup gelaufen?"
   exit 1
 fi
 
-# Umbrella als vertrauenswuerdig markieren. Ohne das ignoriert Claude Code permissions.allow aus
-# <umbrella>/.claude/settings.json ("this workspace has not been trusted") — die Session haengt
-# dann am ersten Permission-Prompt und haelt den Slot. Der Trust-Status liegt pro Session in
+repos="$ws/.artifacture-repos"
+dir="$cwd"
+
+if [ ! -s "$repos" ]; then
+  # Aeltere App ohne Repo-Liste: wie bisher im gemeinsamen Checkout arbeiten.
+  log "warn: $repos fehlt – Session arbeitet ohne eigene Worktree im gemeinsamen Umbrella."
+else
+  # Schluessel der Session: stabil ueber Parken/Fortsetzen, solange CLAUDE_CONFIG_DIR gleich bleibt —
+  # eine fortgesetzte Session findet so ihre Worktree wieder. Ohne CLAUDE_CONFIG_DIR zufaellig.
+  if [ -n "${CLAUDE_CONFIG_DIR:-}" ]; then
+    key="$(printf '%s' "$CLAUDE_CONFIG_DIR" | sha256sum | cut -c1-12)"
+  else
+    key="$(od -An -N6 -tx1 /dev/urandom | tr -d ' \n')"
+  fi
+  wtroot="${ARTIFACTURE_WORKTREE_ROOT:-/workspace/worktrees}"
+  root="$wtroot/s-$key"
+  branch="wt/s-$key"
+
+  # Pfad des Umbrellas relativ zum Workspace ("." ohne Umbrella).
+  case "$cwd" in
+    "$ws") cwdrel="." ;;
+    "$ws"/*) cwdrel="${cwd#"$ws"/}" ;;
+    *) log "Umbrella $cwd liegt nicht unter $ws."; exit 1 ;;
+  esac
+
+  if [ -d "$root" ]; then
+    log "Worktree $root wiederverwendet (fortgesetzte Session)."
+  fi
+  mkdir -p "$wtroot"
+
+  while IFS= read -r rel || [ -n "$rel" ]; do
+    [ -n "$rel" ] || continue
+    repo="$ws/$rel"
+
+    # Ziel: das Umbrella ist die Wurzel der Worktree, Sub-Repos liegen darin (src/ ist im Umbrella
+    # per .gitignore frei). Ohne Umbrella spiegelt die Wurzel den Workspace.
+    if [ "$rel" = "$cwdrel" ]; then
+      dest="$root"
+    elif [ "$cwdrel" = "." ]; then
+      dest="$root/$rel"
+    else
+      case "$rel" in
+        "$cwdrel"/*) dest="$root/${rel#"$cwdrel"/}" ;;
+        *) log "warn: $rel liegt nicht im Umbrella – uebersprungen."; continue ;;
+      esac
+    fi
+
+    # Fortgesetzte Session: vorhandene Worktree nur weiterverwenden — kein Reset, kein Pull, keine
+    # Arbeit verlieren (ADR-014). Den Stand zieht die Session bei Bedarf selbst nach.
+    if [ -e "$dest/.git" ]; then
+      continue
+    fi
+
+    if [ ! -d "$repo/.git" ]; then
+      log "warn: $rel ist kein Git-Checkout – uebersprungen."
+      continue
+    fi
+
+    mkdir -p "$(dirname "$dest")"
+    # flock serialisiert gleichzeitige Session-Starts pro Repo (Fetch und worktree add). Scheitert der
+    # Fetch, entsteht die Worktree vom letzten Stand; scheitert worktree add, startet die Session nicht.
+    # shellcheck disable=SC2016 # die Variablen expandiert die innere Shell
+    if ! flock "$repo/.git/artifacture-worktree.lock" sh -c '
+      repo="$1"; dest="$2"; branch="$3"; rel="$4"
+      git -C "$repo" fetch --prune origin >&2 \
+        || echo "[claude-session] warn: fetch fehlgeschlagen fuer $rel – Worktree vom letzten Stand" >&2
+      if git -C "$repo" show-ref --verify --quiet "refs/heads/$branch"; then
+        # Branch einer frueheren Worktree derselben Session mit ungepushter Arbeit: wieder anhaengen.
+        git -C "$repo" worktree add "$dest" "$branch" >&2
+      else
+        base="$(git -C "$repo" symbolic-ref -q --short refs/remotes/origin/HEAD || echo origin/main)"
+        git -C "$repo" worktree add -b "$branch" "$dest" "$base" >&2
+      fi
+    ' sh "$repo" "$dest" "$branch" "$rel"; then
+      log "Worktree fuer $rel nicht angelegt – Session startet nicht."
+      exit 1
+    fi
+  done < "$repos"
+
+  mkdir -p "$root"
+
+  # Toolset (Skills, Hooks, settings.json) ist per .git/info/exclude ausgeschlossen und kommt mit der
+  # Worktree nicht mit — kopieren statt verlinken: jede Session hat ihre eigene Kopie.
+  if [ -d "$cwd/.claude" ] && [ ! -e "$root/.claude" ]; then
+    cp -a "$cwd/.claude" "$root/.claude"
+  fi
+  dir="$root"
+fi
+
+# Arbeitsverzeichnis als vertrauenswuerdig markieren. Ohne das ignoriert Claude Code permissions.allow
+# aus <dir>/.claude/settings.json ("this workspace has not been trusted") — die Session haengt dann am
+# ersten Permission-Prompt und haelt den Slot. Der Trust-Status liegt pro Session in
 # $CLAUDE_CONFIG_DIR/.claude.json, deshalb hier und nicht im Image.
 if [ -n "${CLAUDE_CONFIG_DIR:-}" ]; then
   cfg="$CLAUDE_CONFIG_DIR/.claude.json"
   [ -s "$cfg" ] || echo '{}' > "$cfg"
   tmp="$cfg.tmp.$$"
   # Scheitert jq (kaputte Datei), startet die Session trotzdem — nur eben mit Prompts.
-  jq --arg p "$cwd" '.projects[$p].hasTrustDialogAccepted = true' "$cfg" > "$tmp" && mv "$tmp" "$cfg" \
-    || { rm -f "$tmp"; echo "[claude-session] Trust fuer $cwd nicht gesetzt" >&2; }
+  jq --arg p "$dir" '.projects[$p].hasTrustDialogAccepted = true' "$cfg" > "$tmp" && mv "$tmp" "$cfg" \
+    || { rm -f "$tmp"; log "Trust fuer $dir nicht gesetzt"; }
 fi
 
-cd "$cwd"
+cd "$dir"
 exec "$CLAUDE_RUNNER_CLAUDE_BIN" "$@"

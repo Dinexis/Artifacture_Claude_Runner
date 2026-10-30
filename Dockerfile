@@ -23,10 +23,14 @@ COPY bin/claude-session bin/git-credential-artifacture /usr/local/bin/
 COPY claude/ /root/.claude/
 COPY entrypoint.sh /usr/local/bin/entrypoint.sh
 
+# push.default upstream: jede Session arbeitet in einer eigenen Worktree auf dem lokalen Branch
+# wt/s-<key> mit Upstream origin/<default> (bin/claude-session) — `git push` landet damit auf dem
+# Branch, auf dem gearbeitet wird (ADR-014), ohne neue Regel fuer die Session.
 RUN chmod 755 /usr/local/bin/claude-session /usr/local/bin/git-credential-artifacture \
               /usr/local/bin/entrypoint.sh /root/.claude/hooks/* \
  && git config --system --add safe.directory '*' \
- && git config --system credential.helper artifacture
+ && git config --system credential.helper artifacture \
+ && git config --system push.default upstream
 
 ENV DOTNET_CLI_TELEMETRY_OPTOUT=1 \
     DOTNET_NOLOGO=1 \

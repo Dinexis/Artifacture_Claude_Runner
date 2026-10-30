@@ -72,6 +72,8 @@ Token mit einer `.mcp.json`-Vorlage, eingesetzt wird er, wo der Nutzer will.
 | `ARTIFACTURE_API_URL` | nein | Setzt der Bereitstellungs-Job (aus `ARTIFACTURE_RUNNER_API_URL` der Plattform); Default `https://artifacture.ai` |
 | `ARTIFACTURE_MCP_URL` | nein | Default `$ARTIFACTURE_API_URL/mcp` |
 | `ARTIFACTURE_WORKSPACE_PATH` | nein | Default `/workspace/project` |
+| `RUNNER_CAPACITY` | nein | Parallele Sessions (`--capacity`), ganze Zahl ab 1. Setzt der Bereitstellungs-Job aus der Capacity des AI-Teammates; Default 1. Selbst betrieben optional per `docker run -e RUNNER_CAPACITY=…` |
+| `ARTIFACTURE_WORKTREE_ROOT` | nein | Wo die Worktrees der Sessions liegen; Default `/workspace/worktrees` |
 | `RUNNER_BASE_DIR` | nein | Arbeitsverzeichnis des Runners für Sessions, Default `/workspace/sessions` |
 
 Ein Runner arbeitet damit für genau ein Artifacture-Projekt. Einen GitHub-Account oder -Token braucht er nicht:
@@ -99,9 +101,15 @@ Runner-Optionen liest `claude self-hosted-runner` direkt aus der Env (Werte in m
   aus. Eine `railway.json` hilft nicht — neue Services lesen Config as Code nicht mehr.
   „Always“ gibt es nur auf bezahlten Plänen.
 - **Kein Volume.** Das Setup klont beim Deploy neu und zieht bei jedem Neustart per ff-pull nach.
-- **Nicht skalieren:** genau ein Container pro AI-Teammate (ADR-044), eine Replica, `--capacity 1`.
-  Alle Sessions eines Containers arbeiten im selben Umbrella und kämen sich im Git-Stand in die
-  Quere. Mehr Durchsatz heißt ein weiteres AI-Teammate.
+- **Genau eine Replica** — ein Teammate, ein Environment, ein Container (ADR-044). Durchsatz kommt
+  über die **Capacity** (`RUNNER_CAPACITY`, ADR-049): so viele Sessions laufen parallel im Container.
+  Jede Session arbeitet in einer eigenen Worktree unter `/workspace/worktrees` und zieht den Stand beim
+  Start selbst nach; sie kommen sich im Git-Stand nicht in die Quere. Mehr Capacity braucht mehr
+  Speicher im Railway-Projekt.
+  **Prozesslimit beachten:** Der Container erlaubt 1000 Prozesse/Threads. Parallele Sessions, die
+  .NET bauen, müssen mit `-m:1 -nodeReuse:false -p:UseSharedCompilation=false` bauen — ein
+  Standard-Build startet bis zu einen MSBuild-Knoten pro Kern, die danach weiterlaufen. Vier parallele
+  Standard-Builds haben am 30.10. das Limit gesprengt und den Container neu gestartet.
 - **Kein Cron Schedule.** Railway-Cron ist für Jobs, die sich beenden; der Runner läuft dauerhaft und wartet bei claude.ai auf Sessions. Zeitgesteuerte Arbeit gehört in einen Scheduled Task in claude.ai.
 - Kein Public Networking, Serverless aus
 
@@ -114,13 +122,22 @@ Runner-Optionen liest `claude self-hosted-runner` direkt aus der Env (Werte in m
    Marker `.artifacture-cwd`.
 2. `entrypoint.sh` schreibt `/etc/claude-code/managed-mcp.json` — nur der Artifacture-MCP,
    keine claude.ai-Connectoren. Der Token wird erst beim Verbinden aus der Env eingesetzt.
-3. `claude self-hosted-runner` startet jede Session über `bin/claude-session`: markiert das Umbrella
-   als vertrauenswürdig (sonst ignoriert Claude Code die Permissions aus `.claude/settings.json`)
-   und wechselt hinein.
+3. Vor dem Runner-Start räumt `entrypoint.sh` die Worktrees früherer Sessions auf — nur ohne
+   `--force`: eine Worktree mit uncommitteter oder ungepushter Arbeit bleibt stehen (Warnung im Log).
+4. `claude self-hosted-runner --capacity "$RUNNER_CAPACITY"` startet jede Session über
+   `bin/claude-session`. Der Wrapper legt pro Session eine eigene Worktree an: für jedes Repo aus
+   `.artifacture-repos` (schreibt `runner.sh`, Umbrella zuerst) `git fetch` und `git worktree add -b
+   wt/s-<key> … origin/<default>` — die Sub-Repo-Worktrees liegen in der des Umbrellas, gleichzeitige
+   Starts serialisiert `flock` pro Repo. `<key>` kommt aus `CLAUDE_CONFIG_DIR`, damit eine geparkte und
+   fortgesetzte Session ihre Worktree wiederfindet (dann kein Fetch, kein Reset). Dazu kopiert er das
+   Toolset (`.claude/`) hinein, markiert die Worktree als vertrauenswürdig (sonst ignoriert Claude Code
+   die Permissions aus `.claude/settings.json`) und wechselt hinein. `push.default upstream` im Image:
+   `git push` landet auf `origin/<default>` (ADR-014). Fehlt `.artifacture-repos` (ältere App),
+   arbeitet die Session wie früher im gemeinsamen Umbrella.
 
 ## Aufbau
 
 - `entrypoint.sh` – Secret-Datei, Runner-Setup, managed-mcp.json, Runner-Start
-- `bin/claude-session` – `--exec-path`-Wrapper: Trust setzen, `cd` ins Umbrella, `exec` Claude Code
+- `bin/claude-session` – `--exec-path`-Wrapper: Worktree pro Session, Toolset kopieren, Trust setzen, `cd`, `exec` Claude Code
 - `bin/git-credential-artifacture` – Git-Auth: holt pro Git-Operation ein kurzlebiges Token beim Backend
 - `claude/` – Session-Baseline in `~/.claude` (Stop-Hook, der ans Pushen erinnert)
