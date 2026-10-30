@@ -9,8 +9,8 @@ Git-Policy: zuerst die Anweisung des Workflow-Status; wo sie nichts vorgibt, ADR
 Der Runner wartet auf Sessions aus dem Claude Environment des Teammates. Eine Session beginnt,
 wenn jemand sie startet: **von Hand** in claude.ai (Web, Desktop, App) mit diesem Environment,
 oder über einen **Scheduled Task** in claude.ai, der auf dieses Environment zeigt (Zeitplan oder
-API-Auslöser). Das Board wird nicht gepollt. In der Session holt Claude die dem Teammate
-zugewiesenen Items über MCP (`list_actionable_items` → `claim_task` → `get_current_task`); was zu tun ist,
+API-Auslöser). Das Board wird nicht gepollt. In der Session holt Claude die Items in Spalten
+seines Akteur-Typs über MCP (ADR-049) (`list_actionable_items` → `claim_task` → `get_current_task`); was zu tun ist,
 steht im SystemPrompt des Workflow-Status.
 
 > **Dieses Repo ist öffentlich und enthält nie ein Secret** (ADR-044). Alles Projekt- und
