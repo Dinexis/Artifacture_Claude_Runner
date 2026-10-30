@@ -106,6 +106,10 @@ Runner-Optionen liest `claude self-hosted-runner` direkt aus der Env (Werte in m
   Jede Session arbeitet in einer eigenen Worktree unter `/workspace/worktrees` und zieht den Stand beim
   Start selbst nach; sie kommen sich im Git-Stand nicht in die Quere. Mehr Capacity braucht mehr
   Speicher im Railway-Projekt.
+  **Prozesslimit beachten:** Der Container erlaubt 1000 Prozesse/Threads. Parallele Sessions, die
+  .NET bauen, müssen mit `-m:1 -nodeReuse:false -p:UseSharedCompilation=false` bauen — ein
+  Standard-Build startet bis zu einen MSBuild-Knoten pro Kern, die danach weiterlaufen. Vier parallele
+  Standard-Builds haben am 30.10. das Limit gesprengt und den Container neu gestartet.
 - **Kein Cron Schedule.** Railway-Cron ist für Jobs, die sich beenden; der Runner läuft dauerhaft und wartet bei claude.ai auf Sessions. Zeitgesteuerte Arbeit gehört in einen Scheduled Task in claude.ai.
 - Kein Public Networking, Serverless aus
 
