@@ -89,8 +89,15 @@ else
         git -C "$repo" worktree add "$dest" "$branch" >&2
       else
         base="$(git -C "$repo" symbolic-ref -q --short refs/remotes/origin/HEAD || echo origin/main)"
-        git -C "$repo" worktree add -b "$branch" "$dest" "$base" >&2
-      fi
+        # --track explizit: das Image setzt branch.autoSetupMerge simple (nur gleichnamige Upstreams).
+        git -C "$repo" worktree add --track -b "$branch" "$dest" "$base" >&2
+      fi || exit 1
+      # push.default upstream nur in dieser Worktree: ein blankes `git push` landet auf
+      # origin/<default> (ADR-014). Im Image gilt simple — ein Branch mit fremdem Upstream (z. B.
+      # von origin/Prod abgezweigt) pusht sonst mit `git push origin <branch>` in den Upstream.
+      git -C "$repo" config extensions.worktreeConfig true \
+        && git -C "$dest" config --worktree push.default upstream \
+        || echo "[claude-session] warn: push.default fuer $rel nicht gesetzt – git push braucht den Ziel-Branch" >&2
     ' sh "$repo" "$dest" "$branch" "$rel"; then
       log "Worktree fuer $rel nicht angelegt – Session startet nicht."
       exit 1

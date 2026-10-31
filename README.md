@@ -131,8 +131,10 @@ Runner-Optionen liest `claude self-hosted-runner` direkt aus der Env (Werte in m
    Starts serialisiert `flock` pro Repo. `<key>` kommt aus `CLAUDE_CONFIG_DIR`, damit eine geparkte und
    fortgesetzte Session ihre Worktree wiederfindet (dann kein Fetch, kein Reset). Dazu kopiert er das
    Toolset (`.claude/`) hinein, markiert die Worktree als vertrauenswürdig (sonst ignoriert Claude Code
-   die Permissions aus `.claude/settings.json`) und wechselt hinein. `push.default upstream` im Image:
-   `git push` landet auf `origin/<default>` (ADR-014). Fehlt `.artifacture-repos` (ältere App),
+   die Permissions aus `.claude/settings.json`) und wechselt hinein. In der Worktree gilt
+   `push.default upstream` (`git config --worktree`): `git push` landet auf `origin/<default>`
+   (ADR-014). Im Image gelten `push.default simple` und `branch.autoSetupMerge simple` — ein Branch
+   mit fremdem Upstream (z. B. von `origin/Prod` abgezweigt) pusht nie in diesen Upstream. Fehlt `.artifacture-repos` (ältere App),
    arbeitet die Session wie früher im gemeinsamen Umbrella.
 
 ## Aufbau
