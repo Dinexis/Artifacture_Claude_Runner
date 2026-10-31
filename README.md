@@ -142,4 +142,4 @@ Runner-Optionen liest `claude self-hosted-runner` direkt aus der Env (Werte in m
 - `entrypoint.sh` – Secret-Datei, Runner-Setup, managed-mcp.json, Runner-Start
 - `bin/claude-session` – `--exec-path`-Wrapper: Worktree pro Session, Toolset kopieren, Trust setzen, `cd`, `exec` Claude Code
 - `bin/git-credential-artifacture` – Git-Auth: holt pro Git-Operation ein kurzlebiges Token beim Backend
-- `claude/` – Session-Baseline in `~/.claude` (Stop-Hook, der ans Pushen erinnert)
+- `claude/` – Session-Baseline in `~/.claude` (Stop-Hook, der einmal pro Repo an ungepushte Arbeit erinnert; ADR-014, Ziel: aktueller Branch)
