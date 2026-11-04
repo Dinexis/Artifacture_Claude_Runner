@@ -128,4 +128,23 @@ if [ -n "${CLAUDE_CONFIG_DIR:-}" ]; then
 fi
 
 cd "$dir"
-exec "$CLAUDE_RUNNER_CLAUDE_BIN" "$@"
+
+# Permission-Mode (Item c7f6a68f): Schedule-Sessions laufen ohne Menschen am Terminal — ein
+# unbeantworteter Permission-Prompt haelt den Turn und den Slot, bis jemand im UI klickt. Der Mode
+# kommt NACH "$@": bei Single-Value-Flags gewinnt das letzte Vorkommen, so ueberschreibt er den Wert
+# des Control-Planes. RUNNER_PERMISSION_MODE: ungesetzt = auto, leer = kein Override (dann gilt, was
+# das Control-Plane schickt). Ein unbekannter Wert liesse Claude Code nicht starten — dann ohne
+# Override weiter und warnen.
+mode="${RUNNER_PERMISSION_MODE-auto}"
+case "$mode" in
+  "")
+    exec "$CLAUDE_RUNNER_CLAUDE_BIN" "$@"
+    ;;
+  auto|acceptEdits|dontAsk|manual|plan|bypassPermissions)
+    exec "$CLAUDE_RUNNER_CLAUDE_BIN" "$@" --permission-mode "$mode"
+    ;;
+  *)
+    log "warn: RUNNER_PERMISSION_MODE='$mode' unbekannt – kein Override, es gilt der Mode des Control-Planes."
+    exec "$CLAUDE_RUNNER_CLAUDE_BIN" "$@"
+    ;;
+esac
