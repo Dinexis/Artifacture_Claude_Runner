@@ -77,6 +77,14 @@ Token mit einer `.mcp.json`-Vorlage, eingesetzt wird er, wo der Nutzer will.
 | `RUNNER_BASE_DIR` | nein | Arbeitsverzeichnis des Runners für Sessions, Default `/workspace/sessions` |
 | `RUNNER_PERMISSION_MODE` | nein | Permission-Mode jeder Session (`--permission-mode`, hängt `bin/claude-session` hinter die Argumente des Control-Planes und überschreibt so dessen Wert). Ungesetzt: `auto` — Schedule-Sessions haben niemanden am Terminal, ein offener Permission-Prompt hält Turn und Slot. Leer (`RUNNER_PERMISSION_MODE=`): kein Override, es gilt der Mode des Control-Planes. Erlaubt: `auto`, `acceptEdits`, `dontAsk`, `manual`, `plan`, `bypassPermissions`; ein anderer Wert wird ignoriert (Warnung im Log). **Achtung:** Der Container hat kein Default-Deny-Egress — mit `auto` laufen Netzwerkzugriffe aus Bash ohne Menschen im Loop. |
 
+**Credentials aus Artifacture (ADR-039 §13).** Zusätzlich setzt Artifacture jedes Projekt-Secret, das im
+Projekt unter *Credentials* diesem Teammate zugeordnet ist, als Variable unter genau seinem Namen — beim
+Bereitstellen und bei jedem Neustart. Nicht mehr zugeordnete werden dabei entfernt; Variablen mit den
+gesperrten Präfixen `ARTIFACTURE_`, `RUNNER_`, `CLAUDE_`, `RAILWAY_` und `SELF_HOSTED_RUNNER_` fasst der
+Abgleich nie an, und Credentials können diese Namen nicht tragen. Der Runner filtert seine Umgebung nicht:
+**jede Session des Teammates liest diese Werte** (das ist der Zweck). Eine Änderung in Artifacture kommt
+erst mit dem nächsten Neustart im Container an. Selbst betriebene Runner bekommen keine Credentials.
+
 Ein Runner arbeitet damit für genau ein Artifacture-Projekt. Einen GitHub-Account oder -Token braucht er nicht:
 den Git-Zugang holt der Credential-Helper bei jeder Git-Operation frisch bei Artifacture
 (`GET /api/runner/git-credential`) — ein Installation-Token der GitHub App, die der Tenant in Artifacture
