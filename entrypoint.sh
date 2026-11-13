@@ -6,8 +6,15 @@ set -euo pipefail
 : "${CLAUDE_ENVIRONMENT_SECRET:?CLAUDE_ENVIRONMENT_SECRET (Environment-Key) fehlt}"
 : "${ARTIFACTURE_PROJECT_TOKEN:?ARTIFACTURE_PROJECT_TOKEN fehlt}"
 
+# Das Image laeuft als Nicht-root-User `runner` (base/Dockerfile). Als root (z. B. `docker run -u 0`)
+# funktioniert alles weiter, Sessions haetten aber root-Rechte.
+if [ "$(id -u)" = "0" ]; then
+  echo "[entrypoint] warn: Runner laeuft als root – vorgesehen ist der User 'runner' des Images." >&2
+fi
+
 export ARTIFACTURE_API_URL="${ARTIFACTURE_API_URL:-https://artifacture.ai}"
 ARTIFACTURE_API_URL="${ARTIFACTURE_API_URL%/}"
+# Muss exportiert sein: /etc/claude-code/managed-mcp.json setzt URL und Token beim Verbinden aus der Env ein.
 export ARTIFACTURE_MCP_URL="${ARTIFACTURE_MCP_URL:-$ARTIFACTURE_API_URL/mcp}"
 # Fester Workspace im Container (kein Volume, beim Deploy neu geklont); der Session-Wrapper liest daraus das Umbrella (.artifacture-cwd).
 export ARTIFACTURE_WORKSPACE_PATH="${ARTIFACTURE_WORKSPACE_PATH:-/workspace/project}"
@@ -27,12 +34,26 @@ export SELF_HOSTED_RUNNER_SESSION_IDLE_MS="${SELF_HOSTED_RUNNER_SESSION_IDLE_MS:
 
 # 1) Secret-Datei aus der Railway-Variable erzeugen und die Variable danach
 #    aus der Umgebung entfernen, damit Sessions sie nicht erben.
-SECRET_FILE=/run/claude/environment-secret
-mkdir -p /run/claude
+#    /run/claude legt das Image fuer `runner` an. Ist es nicht beschreibbar (z. B. /run als
+#    root-eigenes tmpfs gemountet), weicht der Entrypoint ins Home aus — gleicher User, gleicher Schutz.
+SECRET_DIR=/run/claude
+mkdir -p "$SECRET_DIR" 2>/dev/null || true
+if [ ! -w "$SECRET_DIR" ]; then
+  SECRET_DIR="$HOME/.runner"
+  echo "[entrypoint] warn: /run/claude nicht beschreibbar – Secret-Datei unter $SECRET_DIR." >&2
+  ( umask 077; mkdir -p "$SECRET_DIR" )
+fi
+SECRET_FILE="$SECRET_DIR/environment-secret"
 ( umask 077; printf '%s' "$CLAUDE_ENVIRONMENT_SECRET" > "$SECRET_FILE" )
 unset CLAUDE_ENVIRONMENT_SECRET
 
-mkdir -p "$BASE_DIR"
+# Workspace, Sessions und Worktrees muessen dem Runner-User gehoeren (Image: /workspace).
+for dir in "$BASE_DIR" "$(dirname "$ARTIFACTURE_WORKSPACE_PATH")"; do
+  if ! mkdir -p "$dir" 2>/dev/null || [ ! -w "$dir" ]; then
+    echo "[entrypoint] FEHLER: $dir ist fuer $(id -un) nicht beschreibbar – Image-Rechte bzw. Volume pruefen (chown 10001:10001)." >&2
+    exit 1
+  fi
+done
 
 # 2) Working Tree einrichten: Umbrella + Sub-Repos (clone-or-ff-pull), Skills/Settings ins Umbrella.
 #    Muss VOR dem Runner-Start fertig sein. Das Script traegt kein Secret: das Projekt-Token kommt aus der
@@ -94,15 +115,12 @@ cleanup_worktrees() {
 mkdir -p "$ARTIFACTURE_WORKTREE_ROOT"
 cleanup_worktrees || echo "[entrypoint] warn: Aufraeumen der Worktrees unvollstaendig." >&2
 
-# 4) Artifacture-MCP als einzige MCP-Verbindung festlegen. managed-mcp.json ist exklusiv:
-#    .mcp.json, User-Config und claude.ai-Connectoren werden damit ignoriert.
-#    ${ARTIFACTURE_PROJECT_TOKEN} steht bewusst unexpandiert in der Datei — Claude Code setzt es
-#    beim Verbinden aus der Session-Env ein, der Token landet also nicht auf der Platte.
-mkdir -p /etc/claude-code
-jq -n --arg url "$ARTIFACTURE_MCP_URL" \
-  '{mcpServers: {artifacture: {type: "http", url: $url,
-     headers: {Authorization: "Bearer ${ARTIFACTURE_PROJECT_TOKEN}"}}}}' \
-  > /etc/claude-code/managed-mcp.json
+# 4) Artifacture-MCP als einzige MCP-Verbindung: /etc/claude-code/managed-mcp.json kommt statisch aus
+#    dem Image (root-eigen, exklusiv: .mcp.json, User-Config und claude.ai-Connectoren werden ignoriert).
+#    URL und Token setzt Claude Code beim Verbinden aus der Session-Env ein (ARTIFACTURE_MCP_URL oben,
+#    ARTIFACTURE_PROJECT_TOKEN) — der Token landet nicht auf der Platte.
+[ -r /etc/claude-code/managed-mcp.json ] \
+  || echo "[entrypoint] warn: /etc/claude-code/managed-mcp.json fehlt – Sessions haben keinen Artifacture-MCP." >&2
 
 echo "[entrypoint] Starte Runner (workspace: $ARTIFACTURE_WORKSPACE_PATH, base-dir: $BASE_DIR, capacity: $RUNNER_CAPACITY)"
 

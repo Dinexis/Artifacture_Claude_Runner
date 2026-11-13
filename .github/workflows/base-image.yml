@@ -1,0 +1,118 @@
+# Baut das Base Image des Runners (base/Dockerfile), prüft es von innen (base/verify.sh) und
+# veröffentlicht es öffentlich auf GHCR: ghcr.io/dinexis/artifacture-runner-base:<YYYYMMDD>.<run_number>.
+# Wöchentlicher Rebuild nimmt OS-Sicherheitsupdates mit. Der Runner (Dockerfile im Repo-Root) pinnt einen
+# festen Tag — nach einem Push öffnet dieser Workflow einen PR, der den Tag anhebt; übernommen wird er
+# erst mit dem Merge (bewusste Änderung).
+#
+# Einmalig von Hand (Org-Admin): nach dem ersten Push das Package auf „Public“ stellen, und unter
+# Settings → Actions → General „Allow GitHub Actions to create and approve pull requests“ erlauben.
+# Kein Secret außer dem GITHUB_TOKEN (das Image ist öffentlich, ADR-044).
+name: base-image
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'base/**'
+      - '.github/workflows/base-image.yml'
+  workflow_dispatch:
+  schedule:
+    - cron: '0 3 * * 1' # montags 03:00 UTC
+
+permissions:
+  contents: write
+  packages: write
+  pull-requests: write
+
+concurrency:
+  group: base-image-${{ github.ref }}
+  cancel-in-progress: false
+
+env:
+  IMAGE: ghcr.io/dinexis/artifacture-runner-base
+
+jobs:
+  build:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Tag festlegen
+        id: meta
+        run: |
+          tag="$(date -u +%Y%m%d).${GITHUB_RUN_NUMBER}"
+          echo "tag=$tag" >> "$GITHUB_OUTPUT"
+          echo "ref=${IMAGE}:${tag}" >> "$GITHUB_OUTPUT"
+
+      - uses: docker/setup-buildx-action@v3
+
+      # --pull: holt den aktuellen Stand der gepinnten Basis-Tags. no-cache: das apt-get upgrade
+      # muss wirklich laufen, sonst bringt der wöchentliche Rebuild keine Sicherheitsupdates.
+      - name: Bauen
+        uses: docker/build-push-action@v6
+        with:
+          context: base
+          platforms: linux/amd64
+          pull: true
+          no-cache: true
+          load: true
+          tags: ${{ steps.meta.outputs.ref }}
+          build-args: |
+            IMAGE_VERSION=${{ steps.meta.outputs.tag }}
+            IMAGE_REVISION=${{ github.sha }}
+
+      # Als Nicht-root-User (USER des Images), base/ nur read-only gemountet — nichts davon landet im Image.
+      - name: Prüfen (verify.sh)
+        run: |
+          docker run --rm \
+            -v "$PWD/base:/opt/verify:ro" \
+            "${{ steps.meta.outputs.ref }}" \
+            bash /opt/verify/verify.sh
+
+      - name: Größe ins Summary
+        run: |
+          size="$(docker image inspect "${{ steps.meta.outputs.ref }}" --format '{{.Size}}')"
+          {
+            echo "### artifacture-runner-base"
+            echo "- Tag: \`${{ steps.meta.outputs.ref }}\`"
+            echo "- Größe (unkomprimiert): $((size / 1024 / 1024)) MiB"
+          } >> "$GITHUB_STEP_SUMMARY"
+
+      - uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Veröffentlichen
+        run: |
+          docker tag "${{ steps.meta.outputs.ref }}" "${IMAGE}:edge"
+          docker push "${{ steps.meta.outputs.ref }}"
+          docker push "${IMAGE}:edge"
+          digest="$(docker image inspect "${{ steps.meta.outputs.ref }}" --format '{{index .RepoDigests 0}}')"
+          echo "- Digest: \`$digest\`" >> "$GITHUB_STEP_SUMMARY"
+
+      # PR gegen den Branch, auf dem gebaut wurde: setzt ARG BASE_IMAGE in der Runner-Dockerfile auf den
+      # neuen Tag. Übernommen wird die Basis erst mit dem Merge.
+      - name: Bump-PR für den Runner
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          NEW_REF: ${{ steps.meta.outputs.ref }}
+          TAG: ${{ steps.meta.outputs.tag }}
+        run: |
+          base_branch="${GITHUB_REF_NAME}"
+          sed -i -E "s#^ARG BASE_IMAGE=.*#ARG BASE_IMAGE=${NEW_REF}#" Dockerfile
+          if git diff --quiet -- Dockerfile; then
+            echo "Dockerfile pinnt bereits ${NEW_REF} (oder kein ARG BASE_IMAGE) — kein PR."
+            exit 0
+          fi
+          branch="chore/base-image-${TAG}"
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git switch -c "$branch"
+          git commit -am "chore(base): Runner auf artifacture-runner-base:${TAG}"
+          git push origin "$branch"
+          gh pr create --base "$base_branch" --head "$branch" \
+            --title "chore(base): Runner auf artifacture-runner-base:${TAG}" \
+            --body "Neues Base Image \`${NEW_REF}\` (Lauf ${GITHUB_SERVER_URL}/${GITHUB_REPOSITORY}/actions/runs/${GITHUB_RUN_ID}, verify.sh grün). Mit dem Merge übernimmt der Runner die neue Basis; nach \`prod\` erst nach einem Staging-Test."

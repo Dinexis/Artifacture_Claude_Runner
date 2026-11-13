@@ -1,0 +1,11 @@
+{
+  "mcpServers": {
+    "artifacture": {
+      "type": "http",
+      "url": "${ARTIFACTURE_MCP_URL}",
+      "headers": {
+        "Authorization": "Bearer ${ARTIFACTURE_PROJECT_TOKEN}"
+      }
+    }
+  }
+}

@@ -16,6 +16,53 @@ steht im SystemPrompt des Workflow-Status.
 > **Dieses Repo ist öffentlich und enthält nie ein Secret** (ADR-044). Alles Projekt- und
 > Personenspezifische kommt zur Laufzeit über die Railway-Variablen unten.
 
+## Base Image
+
+Der Runner baut auf `ghcr.io/dinexis/artifacture-runner-base:<Tag>` auf (`base/Dockerfile`). Ein Image
+für alle Rollen — ob ein Teammate codet oder testet, entscheiden SystemPrompt und Credentials.
+
+| Inhalt | Version (ARG in `base/Dockerfile`) |
+|---|---|
+| Basis: offizielles Playwright-Image, Ubuntu 24.04 (glibc, Node), Browser unter `/ms-playwright` | `PLAYWRIGHT_VERSION` |
+| .NET SDK | `DOTNET_SDK_TAG` |
+| Claude Code (`claude`) | `CLAUDE_CODE_VERSION` |
+| GitHub CLI (`gh`) | `GH_VERSION` |
+| Railway CLI (`railway`, `@railway/cli`) | `RAILWAY_CLI_VERSION` |
+| Neon CLI (`neonctl`) | `NEONCTL_VERSION` |
+| Playwright CLI (`npx playwright`) | `PLAYWRIGHT_VERSION` |
+| git, curl, jq, openssh-client, unzip, python3, flock | aus Ubuntu, mit jedem Build aktualisiert |
+
+- **Öffentlich auf GHCR**, ohne Secret — Railway und selbst betriebene Runner ziehen es ohne
+  Registry-Zugangsdaten.
+- **Alle Versionen fest gepinnt**, nie `latest`. Version ändern = PR auf `base/Dockerfile`.
+- **Gebaut von `.github/workflows/base-image.yml`**: bei Änderungen an `base/` auf `main`, von Hand
+  (`workflow_dispatch`) und **wöchentlich** (montags, OS-Sicherheitsupdates per `apt-get upgrade`).
+  Veröffentlicht wird nur, wenn `base/verify.sh` im Image grün ist (alle CLIs als Nicht-root aufrufbar,
+  Playwright-Smoke-Test mit headless Chromium). Tags: unveränderlich `<YYYYMMDD>.<run_number>`, dazu
+  `edge` (nur zur Orientierung).
+- **Der Runner pinnt einen festen Tag** (`ARG BASE_IMAGE` in `Dockerfile`). Nach jedem Build öffnet der
+  Workflow einen PR, der ihn anhebt; übernommen wird die neue Basis erst mit dem Merge, nach `prod` erst
+  nach einem Staging-Test.
+- Einmalig (Org-Admin): Package nach dem ersten Push auf **Public** stellen; in den Actions-Einstellungen
+  „Allow GitHub Actions to create and approve pull requests“ erlauben (für den Bump-PR).
+
+### Nicht-root
+
+Container und Sessions laufen als **`runner` (UID/GID 10001)** — **ohne sudo, ohne apt**. Fehlt ein
+System-Tool, gehört es per PR ins Base Image, nicht in die Session. `npm i -g` installiert nach
+`~/.npm-global`. Eigene Volumes auf `/workspace` (Self Managed) müssen `runner` gehören:
+`chown -R 10001:10001 <volume>`.
+
+### Testing im Container
+
+- Ein Testlauf startet **immer** mit `npx playwright install chromium` im Projektverzeichnis — weicht die
+  Playwright-Version des Projekts vom Image ab, lädt das die passenden Browser (bei gleicher Version in
+  Sekunden durch). Systemabhängigkeiten (`--with-deps`) lassen sich ohne root nicht nachinstallieren;
+  bei einem großen Versionssprung das Base Image anheben.
+- Playwright im Container mit `workers: 1–2` (Speicher, Prozesslimit unten).
+- Die CLIs kosten keinen RAM, nur Chromium während eines Testlaufs: Tester-Service mit ausreichend
+  Speicher (Startwert ~2 GB), bei Capacity > 1 entsprechend mehr.
+
 ## Bereitstellung über Artifacture
 
 Im Normalfall legt **Artifacture** den Service an (ADR-044): Ein AI-Teammate bekommt beim Anlegen
@@ -47,7 +94,8 @@ docker run -d --name artifacture-runner-<teammate> --restart always \
 - **Pflicht:** `CLAUDE_ENVIRONMENT_SECRET` (eigenes Self-hosted Environment pro Teammate — Artifacture
   sieht den Key nie) und `ARTIFACTURE_PROJECT_TOKEN` (der angezeigte Token). Verloren? In Artifacture
   unter *Nutzer* „Token neu erzeugen“ — der alte wird sofort ungültig.
-- **Optional:** alle übrigen Variablen aus der Tabelle unten, `CLAUDE_CODE_VERSION` als `--build-arg`.
+- **Optional:** alle übrigen Variablen aus der Tabelle unten, `CLAUDE_CODE_VERSION` als `--build-arg`
+  (ohne: die Version aus dem Base Image). `docker build` zieht die öffentliche Basis ohne Registry-Login.
 - `--restart always` ist Pflicht (der Runner beendet sich nach jeder Session mit Exit 0), eine Replica,
   kein Volume — wie unter *Railway-Einstellungen*.
 - **Git regelt ihr selbst.** Artifacture stellt selbst betriebenen Teammates keinen Git-Zugang aus und
@@ -84,6 +132,14 @@ gesperrten Präfixen `ARTIFACTURE_`, `RUNNER_`, `CLAUDE_`, `RAILWAY_` und `SELF_
 Abgleich nie an, und Credentials können diese Namen nicht tragen. Der Runner filtert seine Umgebung nicht:
 **jede Session des Teammates liest diese Werte** (das ist der Zweck). Eine Änderung in Artifacture kommt
 erst mit dem nächsten Neustart im Container an. Selbst betriebene Runner bekommen keine Credentials.
+
+**CLIs authentifizieren.** `neonctl` liest `NEON_API_KEY`, `gh` liest `GH_TOKEN` — beide Namen sind als
+Credential möglich. Die Railway CLI liest `RAILWAY_TOKEN` bzw. `RAILWAY_API_TOKEN`; das Präfix `RAILWAY_`
+ist gesperrt, und Railway setzt eigene `RAILWAY_*`-Variablen des **Runner**-Services. Deshalb das
+Credential anders benennen (z. B. `TARGET_RAILWAY_TOKEN`) und pro Aufruf übergeben:
+`RAILWAY_TOKEN="$TARGET_RAILWAY_TOKEN" railway …`. `gh` nutzt den Git-Credential-Helper nicht; ein Token
+für die Repos des Projekts liefert er bei Bedarf:
+`GH_TOKEN="$(printf 'protocol=https\nhost=github.com\n\n' | git credential fill | sed -n 's/^password=//p')" gh …`.
 
 Ein Runner arbeitet damit für genau ein Artifacture-Projekt. Einen GitHub-Account oder -Token braucht er nicht:
 den Git-Zugang holt der Credential-Helper bei jeder Git-Operation frisch bei Artifacture
@@ -129,8 +185,9 @@ Runner-Optionen liest `claude self-hosted-runner` direkt aus der Env (Werte in m
    Umbrella + Sub-Repos nach `$ARTIFACTURE_WORKSPACE_PATH` (clone-or-ff-pull),
    Runner-Toolset (Skills, Hooks, settings.json mit freiem Bash/git) nach `<umbrella>/.claude/`,
    Marker `.artifacture-cwd`.
-2. `entrypoint.sh` schreibt `/etc/claude-code/managed-mcp.json` — nur der Artifacture-MCP,
-   keine claude.ai-Connectoren. Der Token wird erst beim Verbinden aus der Env eingesetzt.
+2. `/etc/claude-code/managed-mcp.json` kommt statisch aus dem Image (root-eigen) — nur der
+   Artifacture-MCP, keine claude.ai-Connectoren. URL (`ARTIFACTURE_MCP_URL`, exportiert der Entrypoint)
+   und Token werden erst beim Verbinden aus der Env eingesetzt.
 3. Vor dem Runner-Start räumt `entrypoint.sh` die Worktrees früherer Sessions auf — nur ohne
    `--force`: eine Worktree mit uncommitteter oder ungepushter Arbeit bleibt stehen (Warnung im Log).
 4. `claude self-hosted-runner --capacity "$RUNNER_CAPACITY"` startet jede Session über
@@ -148,7 +205,11 @@ Runner-Optionen liest `claude self-hosted-runner` direkt aus der Env (Werte in m
 
 ## Aufbau
 
-- `entrypoint.sh` – Secret-Datei, Runner-Setup, managed-mcp.json, Runner-Start
+- `Dockerfile` – Runner-Image auf dem Base Image (fester Tag in `ARG BASE_IMAGE`)
+- `base/` – Base Image: `Dockerfile`, `verify.sh` (Prüfung im Image), `smoke/` (Playwright-Smoke-Test)
+- `.github/workflows/base-image.yml` – baut, prüft und veröffentlicht das Base Image, öffnet den Bump-PR
+- `managed-mcp.json` – einzige MCP-Verbindung der Sessions (nach `/etc/claude-code/`)
+- `entrypoint.sh` – Secret-Datei, Runner-Setup, Worktree-Aufräumen, Runner-Start
 - `bin/claude-session` – `--exec-path`-Wrapper: Worktree pro Session, Toolset kopieren, Trust setzen, `cd`, `exec` Claude Code mit `--permission-mode` aus `RUNNER_PERMISSION_MODE` (Default `auto`)
 - `bin/git-credential-artifacture` – Git-Auth: holt pro Git-Operation ein kurzlebiges Token beim Backend
 - `claude/` – Session-Baseline in `~/.claude` (Stop-Hook, der einmal pro Repo an ungepushte Arbeit erinnert; ADR-014, Ziel: aktueller Branch)

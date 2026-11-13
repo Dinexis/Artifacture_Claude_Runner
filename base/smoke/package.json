@@ -1,0 +1,9 @@
+{
+  "name": "artifacture-runner-base-smoke",
+  "private": true,
+  "description": "Smoke-Test des Base Images: headless Chromium gegen eine erreichbare URL",
+  "type": "module",
+  "devDependencies": {
+    "@playwright/test": "1.65.0"
+  }
+}
