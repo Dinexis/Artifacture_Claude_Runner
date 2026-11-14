@@ -5,7 +5,7 @@
 # Fester Tag, nie `edge`: ein Update der Basis ist eine bewusste Änderung dieser Zeile. Den PR dafür
 # öffnet .github/workflows/base-image.yml nach jedem Build (auch wöchentlich, für OS-Sicherheitsupdates).
 # UNRELEASED gilt nur bis zum ersten Build — der erste Bump-PR setzt den echten Tag.
-ARG BASE_IMAGE=ghcr.io/dinexis/artifacture-runner-base:UNRELEASED
+ARG BASE_IMAGE=ghcr.io/dinexis/artifacture-runner-base:20261114.3
 FROM ${BASE_IMAGE}
 
 USER root
