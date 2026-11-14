@@ -85,11 +85,21 @@ jobs:
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
 
+      # GHCR bricht große Pushes gelegentlich mit „unknown blob“ ab. Ein erneuter Push überspringt die
+      # Layer, die schon oben sind — daher bis zu drei Versuche.
       - name: Veröffentlichen
         run: |
+          push() {
+            for attempt in 1 2 3; do
+              docker push "$1" && return 0
+              echo "::warning::Push von $1 fehlgeschlagen (Versuch $attempt), neuer Versuch in 15 s"
+              sleep 15
+            done
+            return 1
+          }
           docker tag "${{ steps.meta.outputs.ref }}" "${IMAGE}:edge"
-          docker push "${{ steps.meta.outputs.ref }}"
-          docker push "${IMAGE}:edge"
+          push "${{ steps.meta.outputs.ref }}"
+          push "${IMAGE}:edge"
           digest="$(docker image inspect "${{ steps.meta.outputs.ref }}" --format '{{index .RepoDigests 0}}')"
           echo "- Digest: \`$digest\`" >> "$GITHUB_STEP_SUMMARY"
 
